@@ -1,0 +1,6 @@
+- name: Configure Uptime Kuma with Docker
+  hosts: web-monitoring
+  become: yes
+
+  tasks:
+    - name:
