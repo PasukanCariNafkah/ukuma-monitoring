@@ -58,6 +58,11 @@
       args:
         creates: /usr/local/bin/docker-compose
 
+    - name: Set permission folder Docker Compose
+      file:
+        path: /usr/local/bin/docker-compose
+        mode: '0755'
+
     - name: Verify Docker Installation
       shell: docker --version
       register: docker_version
