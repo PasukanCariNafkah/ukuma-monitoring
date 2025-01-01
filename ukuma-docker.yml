@@ -80,3 +80,55 @@
     - name: Display Docker Compose Version
       debug:
         msg: 'Docker Compose version installed : {{docker_compose_version.stdout}}'
+
+    - name: Install pip for Python3
+      apt:
+        name: python3-pip
+        state: present
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Install bcrypt Python package
+      pip:
+        name: bcrypt
+        state: present
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Hash password using bcrypt via Python script
+      command: >
+        python3 -c
+        "import bcrypt;
+        password = b'{{ password }}';
+        salt = bcrypt.gensalt();
+        hashed_password = bcrypt.hashpw(password, salt);
+        print(hashed_password.decode())"
+      register: bcrypt_hash_result
+      changed_when: false
+
+    - name: Create Directory for uptime-kuma
+      file:
+        path: /opt/uptime-kuma
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Create Docker Compose File for Uptime Kuma
+      copy:
+        content: '{{docker_compose_template}}'
+        dest: /opt/uptime-kuma/docker-compose.yml
+
+    - name: Start Uptime Kuma Container
+      shell: docker-compose up -d
+      args:
+        chdir: /opt/uptime-kuma
+
+    - name: Add or update user credentials in SQLite database
+      command: >
+        docker exec uptime-kuma sqlite3 /app/data/kuma.db
+        "INSERT OR REPLACE INTO user (id, username, password)
+        VALUES (1, '{{ username }}', '{{ bcrypt_hash_result.stdout }}');"
+      args:
+        warn: false
+
+    - name: Restart Docker Container
+      command: docker restart uptime-kuma
