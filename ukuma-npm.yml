@@ -1,0 +1,114 @@
+- name: Configure Uptime Kuma with NPM
+  hosts: web-monitoring
+  become: true
+  vars:
+    username: 'ukuma'
+    password: 'ukuma'
+  tasks:
+    - name: Update packages cache
+      apt:
+        update-cache: yes
+
+    - name: Add Node.js Latest (20.x) repository
+      shell: |
+        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+      args:
+        warn: false
+
+    - name: Install latest Node.js
+      apt:
+        name: nodejs
+        state: latest
+
+    - name: Verify Node.js version
+      command: node --version
+      register: node_version
+      changed_when: false
+
+    - name: Log Node.js version
+      debug:
+        msg: 'Installed Node.js version is: {{ node_version.stdout }}'
+
+    - name: Install Git and SQLite Packages
+      apt:
+        name:
+          - git
+          - sqlite3
+        state: present
+
+    - name: Install PM2 Globally (manage Uptime Kuma Process)
+      npm:
+        name: pm2
+        global: yes
+        state: latest
+
+    - name: Remove existing Uptime Kuma folder if exists
+      file:
+        path: /opt/uptime-kuma
+        state: absent
+
+    - name: Clone Github Uptime Kuma Repo
+      git:
+        repo: https://github.com/louislam/uptime-kuma.git
+        dest: /opt/uptime-kuma/
+
+    - name: Install Dependencies Uptime Kuma
+      command: npm install
+      args:
+        chdir: /opt/uptime-kuma
+
+    - name: Build Uptime Kuma
+      command: npm run build
+      args:
+        chdir: /opt/uptime-kuma
+
+    - name: Makesure Folder 'data' is created
+      shell: mkdir -p /opt/uptime-kuma/data/
+
+    - name: Configure db-config.json
+      copy:
+        dest: /opt/uptime-kuma/data/db-config.json
+        content: |
+          {
+              "type": "sqlite",
+              "port": 3306,
+              "hostname": "",
+              "username": "",
+              "password": "",
+              "dbName": "kuma"
+          }
+
+    - name: Hash password using bcrypt via Python script
+      command: >
+        python3 -c
+        "import bcrypt;
+        password = b'{{ password }}';
+        salt = bcrypt.gensalt();
+        hashed_password = bcrypt.hashpw(password, salt);
+        print(hashed_password.decode())"
+      register: bcrypt_hash_result
+      changed_when: false
+
+    - name: Add or update user credentials in SQLite database
+      command: >
+        sqlite3 /opt/uptime-kuma/db/kuma.db
+        "INSERT OR REPLACE INTO user (id, username, password)
+        VALUES (1, '{{ username }}', '{{ bcrypt_hash_result.stdout }}');"
+      args:
+        warn: false
+
+    - name: Make sure pm2 is not running
+      command: pm2 kill
+      args:
+        chdir: /opt/uptime-kuma
+
+    - name: Start Uptime Kuma using PM2
+      command: pm2 start server/server.js --name "uptime-kuma" -- --port 3001
+      args:
+        chdir: /opt/uptime-kuma
+
+    - name: Save PM2 Process List
+      command: pm2 save
+
+    # - name: Restart Uptime Kuma
+    #   command: pm2 restart uptime-kuma
